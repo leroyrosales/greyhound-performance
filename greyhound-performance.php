@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       Greyhound Performance
- * Description:       Lean WordPress tuning from SFAS — fewer head tags, no emoji bloat, tighter XML-RPC/pingback surface (named for the track greyhound: built for speed).
+ * Description:       Lean WordPress tuning, fewer head tags, no emoji bloat, tighter XML-RPC/pingback surface (named for the track greyhound: built for speed).
  * Version:           1.0.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
