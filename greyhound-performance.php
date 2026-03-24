@@ -51,7 +51,7 @@ final class Greyhound_Performance {
 		if (
 			apply_filters(
 				'greyhound_perf_remove_feed_head_links',
-				apply_filters( 'sfas_perf_remove_feed_head_links', true )
+				apply_filters( 'greyhound_perf_remove_feed_head_links', true )
 			)
 		) {
 			remove_action( 'wp_head', 'feed_links', 2 );
@@ -114,7 +114,7 @@ final class Greyhound_Performance {
 		if (
 			apply_filters(
 				'greyhound_perf_disable_xmlrpc',
-				apply_filters( 'sfas_perf_disable_xmlrpc', true )
+				apply_filters( 'greyhound_perf_disable_xmlrpc', true )
 			)
 		) {
 			add_filter( 'xmlrpc_enabled', '__return_false' );
