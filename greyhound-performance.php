@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       Greyhound Performance
- * Description:       Lean WordPress tuning, fewer head tags, no emoji bloat, tighter XML-RPC/pingback surface (named for the track greyhound: built for speed).
+ * Description:       Lean WordPress tuning from Greyhound Performance — fewer head tags, no emoji bloat, tighter XML-RPC/pingback surface (named for the track greyhound: built for speed).
  * Version:           1.0.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
@@ -27,16 +27,265 @@ add_action( 'plugins_loaded', array( 'Greyhound_Performance', 'init' ), 1 );
  * Performance and hardening routines.
  */
 final class Greyhound_Performance {
+	/**
+	 * Option key for persisted admin settings.
+	 */
+	private const OPTION_KEY = 'greyhound_perf_settings';
+
+	/**
+	 * Settings map for labels/help text.
+	 *
+	 * @return array<string, array<string, string>>
+	 */
+	private static function settings_schema(): array {
+		return array(
+			'remove_head_noise'   => array(
+				'label'       => __( 'Remove wp_head noise', 'greyhound-performance' ),
+				'description' => __( 'Removes extra head tags like generator, shortlink, and WLW/RSD links.', 'greyhound-performance' ),
+			),
+			'remove_jqmigrate'    => array(
+				'label'       => __( 'Remove jQuery Migrate (frontend)', 'greyhound-performance' ),
+				'description' => __( 'Drops jquery-migrate from frontend pages when possible.', 'greyhound-performance' ),
+			),
+			'remove_oembed'       => array(
+				'label'       => __( 'Remove oEmbed head/route hooks', 'greyhound-performance' ),
+				'description' => __( 'Disables oEmbed discovery links, host JS, and route registration.', 'greyhound-performance' ),
+			),
+			'disable_trackbacks'  => array(
+				'label'       => __( 'Harden trackbacks and XML-RPC', 'greyhound-performance' ),
+				'description' => __( 'Removes pingback exposure and disables XML-RPC behavior configured by this plugin.', 'greyhound-performance' ),
+			),
+			'disable_emojis'      => array(
+				'label'       => __( 'Disable emoji assets', 'greyhound-performance' ),
+				'description' => __( 'Removes emoji scripts/styles, TinyMCE emoji plugin, and emoji DNS prefetch.', 'greyhound-performance' ),
+			),
+		);
+	}
+
+	/**
+	 * Default settings (all enabled).
+	 *
+	 * @return array<string, bool>
+	 */
+	private static function default_settings(): array {
+		return array_fill_keys( array_keys( self::settings_schema() ), true );
+	}
+
+	/**
+	 * Get merged plugin settings.
+	 *
+	 * @return array<string, bool>
+	 */
+	private static function get_settings(): array {
+		$defaults = self::default_settings();
+		$raw      = get_option( self::OPTION_KEY, array() );
+
+		if ( ! is_array( $raw ) ) {
+			return $defaults;
+		}
+
+		foreach ( $defaults as $key => $enabled ) {
+			$defaults[ $key ] = isset( $raw[ $key ] ) && '1' === (string) $raw[ $key ];
+		}
+
+		return $defaults;
+	}
+
+	/**
+	 * Whether a specific setting is enabled.
+	 */
+	private static function is_enabled( string $key ): bool {
+		$settings = self::get_settings();
+		return ! empty( $settings[ $key ] );
+	}
 
 	/**
 	 * Register hooks.
 	 */
 	public static function init(): void {
-		self::remove_head_noise();
-		self::register_jquery_migrate_removal();
-		self::remove_oembed_head();
-		self::disable_trackbacks_and_xmlrpc();
-		self::disable_emojis();
+		self::register_admin_settings();
+		self::register_plugin_action_links();
+
+		if ( self::is_enabled( 'remove_head_noise' ) ) {
+			self::remove_head_noise();
+		}
+
+		if ( self::is_enabled( 'remove_jqmigrate' ) ) {
+			self::register_jquery_migrate_removal();
+		}
+
+		if ( self::is_enabled( 'remove_oembed' ) ) {
+			self::remove_oembed_head();
+		}
+
+		if ( self::is_enabled( 'disable_trackbacks' ) ) {
+			self::disable_trackbacks_and_xmlrpc();
+		}
+
+		if ( self::is_enabled( 'disable_emojis' ) ) {
+			self::disable_emojis();
+		}
+	}
+
+	/**
+	 * Register plugin row action links.
+	 */
+	private static function register_plugin_action_links(): void {
+		if ( ! is_admin() ) {
+			return;
+		}
+
+		add_filter(
+			'plugin_action_links_' . plugin_basename( __FILE__ ),
+			array( self::class, 'add_settings_action_link' )
+		);
+	}
+
+	/**
+	 * Add Settings link to plugin action links.
+	 *
+	 * @param string[] $links Existing action links.
+	 * @return string[]
+	 */
+	public static function add_settings_action_link( array $links ): array {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return $links;
+		}
+
+		$url = admin_url( 'options-general.php?page=greyhound-performance' );
+
+		$settings_link = '<a href="' . esc_url( $url ) . '">' . esc_html__( 'Settings', 'greyhound-performance' ) . '</a>';
+
+		array_unshift( $links, $settings_link );
+		return $links;
+	}
+
+	/**
+	 * Register WP settings screen integration.
+	 */
+	private static function register_admin_settings(): void {
+		if ( ! is_admin() ) {
+			return;
+		}
+
+		add_action( 'admin_init', array( self::class, 'register_settings' ) );
+		add_action( 'admin_menu', array( self::class, 'register_settings_page' ) );
+	}
+
+	/**
+	 * Register option and settings fields.
+	 */
+	public static function register_settings(): void {
+		register_setting(
+			'greyhound_perf_settings_group',
+			self::OPTION_KEY,
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( self::class, 'sanitize_settings' ),
+				'default'           => self::default_settings(),
+			)
+		);
+
+		add_settings_section(
+			'greyhound_perf_main_section',
+			__( 'Performance Options', 'greyhound-performance' ),
+			array( self::class, 'render_settings_section' ),
+			'greyhound-performance'
+		);
+
+		foreach ( self::settings_schema() as $key => $config ) {
+			add_settings_field(
+				$key,
+				$config['label'],
+				array( self::class, 'render_checkbox_field' ),
+				'greyhound-performance',
+				'greyhound_perf_main_section',
+				array(
+					'key'         => $key,
+					'description' => $config['description'],
+				)
+			);
+		}
+	}
+
+	/**
+	 * Sanitize setting payload into explicit booleans.
+	 *
+	 * @param mixed $input Raw setting payload.
+	 * @return array<string, bool>
+	 */
+	public static function sanitize_settings( $input ): array {
+		$defaults = self::default_settings();
+		$input    = is_array( $input ) ? $input : array();
+
+		foreach ( $defaults as $key => $enabled ) {
+			$defaults[ $key ] = isset( $input[ $key ] ) && '1' === (string) $input[ $key ];
+		}
+
+		return $defaults;
+	}
+
+	/**
+	 * Settings section intro text.
+	 */
+	public static function render_settings_section(): void {
+		echo '<p>' . esc_html__( 'Choose which Greyhound Performance optimizations to enable.', 'greyhound-performance' ) . '</p>';
+	}
+
+	/**
+	 * Render a checkbox field.
+	 *
+	 * @param array<string, string> $args Field args.
+	 */
+	public static function render_checkbox_field( array $args ): void {
+		$key      = isset( $args['key'] ) ? (string) $args['key'] : '';
+		$settings = self::get_settings();
+		$checked  = ! empty( $settings[ $key ] );
+		$id       = 'greyhound_perf_' . $key;
+
+		echo '<label for="' . esc_attr( $id ) . '">';
+		echo '<input type="hidden" name="' . esc_attr( self::OPTION_KEY ) . '[' . esc_attr( $key ) . ']" value="0" />';
+		echo '<input type="checkbox" id="' . esc_attr( $id ) . '" name="' . esc_attr( self::OPTION_KEY ) . '[' . esc_attr( $key ) . ']" value="1" ' . checked( $checked, true, false ) . ' />';
+		echo ' ' . esc_html__( 'Enabled', 'greyhound-performance' );
+		echo '</label>';
+
+		if ( ! empty( $args['description'] ) ) {
+			echo '<p class="description">' . esc_html( $args['description'] ) . '</p>';
+		}
+	}
+
+	/**
+	 * Add submenu item under Settings.
+	 */
+	public static function register_settings_page(): void {
+		add_options_page(
+			__( 'Greyhound Performance', 'greyhound-performance' ),
+			__( 'Greyhound Performance', 'greyhound-performance' ),
+			'manage_options',
+			'greyhound-performance',
+			array( self::class, 'render_settings_page' )
+		);
+	}
+
+	/**
+	 * Render settings page markup.
+	 */
+	public static function render_settings_page(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		?>
+		<div class="wrap">
+			<h1><?php echo esc_html__( 'Greyhound Performance', 'greyhound-performance' ); ?></h1>
+			<form method="post" action="options.php">
+				<?php
+				settings_fields( 'greyhound_perf_settings_group' );
+				do_settings_sections( 'greyhound-performance' );
+				submit_button();
+				?>
+			</form>
+		</div>
+		<?php
 	}
 
 	/**
@@ -51,7 +300,7 @@ final class Greyhound_Performance {
 		if (
 			apply_filters(
 				'greyhound_perf_remove_feed_head_links',
-				apply_filters( 'greyhound_perf_remove_feed_head_links', true )
+				apply_filters( 'greyhound_perf_remove_feed_head_links_legacy', true )
 			)
 		) {
 			remove_action( 'wp_head', 'feed_links', 2 );
@@ -114,7 +363,7 @@ final class Greyhound_Performance {
 		if (
 			apply_filters(
 				'greyhound_perf_disable_xmlrpc',
-				apply_filters( 'greyhound_perf_disable_xmlrpc', true )
+				apply_filters( 'greyhound_perf_disable_xmlrpc_legacy', true )
 			)
 		) {
 			add_filter( 'xmlrpc_enabled', '__return_false' );
